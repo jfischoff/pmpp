@@ -1,3 +1,7 @@
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
 #include <stdio.h>
 #include <cuda_runtime.h>
 #include "errors.h"
@@ -47,7 +51,6 @@ void colorToGrayscaleConversion(
     cudaMalloc((void**) &Pout_d, outSize);
     cudaMalloc((void**) &Pin_d, inSize);
 
-    cudaMemcpy(Pout_d, Pout, outSize, cudaMemcpyHostToDevice);
     cudaMemcpy(Pin_d, Pin, inSize, cudaMemcpyHostToDevice);
 
     dim3 dimGrid(
@@ -78,38 +81,47 @@ void colorToGrayscaleConversion(
         Pout, 
         Pout_d, 
         outSize, 
-        cudaMemcpyHostToDevice
+        cudaMemcpyDeviceToHost
     );
 
     cudaFree(Pout_d);
+    cudaFree(Pin_d);
 
     return;   
 }
 
 int main() {
+    const char* input_filename = "data/man.png";
+    const char* output_filename = "generated/grayScale.png";
 
-    static unsigned char Pin[ELEMENT_COUNT], Pout[WIDTH*HEIGHT];
+    int width, height, channels;
+    unsigned char* Pin = stbi_load(input_filename, &width, &height, &channels, 3);
 
-    unsigned char pixelValue = 0;
-    for(int i = 0; i < WIDTH; i++){
-        for(int j = 0; j < HEIGHT; j++){
-            for(int k = 0; k < CHANNELS; k++){
-                pixelValue = (pixelValue + 1) % 256;
-
-                int  index = WIDTH * i + HEIGHT * j + k;
-                Pin[index] = pixelValue;
-            }
-        }
+    if (!Pin) {
+        printf("Error loading image %s\n", input_filename);
+        return 1;
     }
+
+    printf("Loaded image: %dx%d with %d channels\n", width, height, channels);
+
+    unsigned char* Pout = (unsigned char*)malloc(width * height);
 
     colorToGrayscaleConversion(
         Pout,
         Pin, 
-        WIDTH,
-        HEIGHT,
-        CHANNELS
+        width,
+        height,
+        channels
     );
 
+    // Save the grayscale image
+    stbi_write_png(output_filename, width, height, 1, Pout, width);
 
+    printf("Saved grayscale image to %s\n", output_filename);
 
+    // Clean up
+    stbi_image_free(Pin);
+    free(Pout);
+
+    return 0;
 }
