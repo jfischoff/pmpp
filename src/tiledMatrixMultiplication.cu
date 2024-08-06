@@ -6,9 +6,9 @@
 #include <cuda_runtime.h>
 #include "errors.h"
 
-#define TILE_WIDTH 4
-#define THREADS_PER_BLOCK_X 8
-#define THREADS_PER_BLOCK_Y 8
+#define TILE_WIDTH 4 
+#define THREADS_PER_BLOCK_X 3
+#define THREADS_PER_BLOCK_Y 3
 #define min(a,b) ((a) < (b) ? (a) : (b))
 
 void slow_matrix_multiplication(float *m, float *n, float *p, int width){
@@ -48,25 +48,30 @@ __global__ void tiledMatrixMultiplyKernel(
     float PValue = 0;
 
     int tile_count = (Width + TILE_WIDTH - 1) / TILE_WIDTH;
-    //printf("tile_count: %d\n", tile_count);
     
-    for (int ph = 0; ph < 1; ++ph) {
+    for (int ph = 0; ph < tile_count; ++ph) {
         // Collaborative loading of a tile
         if ((Row < Width) && (ph*TILE_WIDTH+tx) < Width){
-            Mds[ty][tx] = M[Row*Width + ph*TILE_WIDTH + tx];
+            int mIndex = Row*Width + ph*TILE_WIDTH + tx;
+            float mValue = M[mIndex];
+            Mds[ty][tx] = mValue;
         } else {
             Mds[ty][tx] = 0;
         }
-        __syncthreads();
+
         if ((ph*TILE_WIDTH+ty) < Width && Col < Width) {
-            Nds[ty][tx] = N[(ph*TILE_WIDTH + ty) * Width + Col];
+            int nIndex = (ph*TILE_WIDTH + ty) * Width + Col;
+            float nValue = N[nIndex];
+            Nds[ty][tx] = nValue;
         } else {
             Nds[ty][tx] = 0;
         }
         __syncthreads();
 
         for (int k = 0; k < TILE_WIDTH; ++k) {
-            PValue += Mds[ty][k] * Nds[k][tx];
+            float mValue = Mds[ty][k];
+            float nValue = Nds[k][tx];
+            PValue += mValue * nValue;
         }
         __syncthreads();
         
@@ -103,14 +108,18 @@ void tiledMatrixMultiply(
     );
 
     dim3 dimGrid(
-        ceil(((float) width / TILE_WIDTH) / THREADS_PER_BLOCK_X ),
-        ceil(((float) width / TILE_WIDTH) / THREADS_PER_BLOCK_Y ),
+        ceil((float) width / THREADS_PER_BLOCK_X ),
+        ceil((float) width / THREADS_PER_BLOCK_Y ),
         1
     );
 
+    //assert that the tile size is larger than the THREADS_PER_BLOCK_X and 
+    // THREADS_PER_BLOCK_Y
+    assert(THREADS_PER_BLOCK_X <= TILE_WIDTH);
+    assert(THREADS_PER_BLOCK_X <= TILE_WIDTH);
+
     printf("dimBlock: (%d, %d, %d)\n", dimBlock.x, dimBlock.y, dimBlock.z);
     printf("dimGrid: (%d, %d, %d)\n", dimGrid.x, dimGrid.y, dimGrid.z);
-
 
     tiledMatrixMultiplyKernel<<< dimGrid, dimBlock >>>(N_d, M_d, P_d, width);
 
@@ -145,9 +154,9 @@ int main() {
     int p_size = sizeof(float) * width;
 
     float M[] = {
-        1,2,3,
-        4,5,6,
-        7,8,9
+        1,0,0,
+        0,1,0,
+        0,0,1
     };
 
     float N[] = {

@@ -2,7 +2,7 @@
 NVCC := nvcc
 
 # Compiler flags
-NVCC_FLAGS := -O2
+NVCC_FLAGS := -O0
 
 # Source directory
 SRC_DIR := src
