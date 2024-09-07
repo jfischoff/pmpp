@@ -6,9 +6,9 @@
 #include <cuda_runtime.h>
 #include "errors.h"
 
-#define THREADS_PER_BLOCK_X 3
-#define THREADS_PER_BLOCK_Y 3
-#define FILTER_RADIUS 2
+#define THREADS_PER_BLOCK_X 16
+#define THREADS_PER_BLOCK_Y 16
+#define FILTER_RADIUS 1
 #define IN_TILE_DIM 32
 #define OUT_TILE_DIM ((IN_TILE_DIM) - 2 * (FILTER_RADIUS))
 __constant__ float F[2*FILTER_RADIUS+1][2*FILTER_RADIUS+1];
@@ -28,17 +28,30 @@ __global__ void convolution_2D_basic_kernel(
     float Pvalue = 0.0f;
 
     int filterDiameter = 2*r+1;
-
-    for (int fRow = 0; fRow < filterDiameter; fRow++) {
-        for (int fCol = 0; fCol < filterDiameter; fCol++) {
-            int inRow = outRow - r + fRow;
-            int inCol = outCol - r + fCol;
-            if (inRow > 0 && inRow < height && inCol > 0 && inCol < width) {
-                Pvalue += F[fCol][fRow] * N[inRow * width + inCol];
+    if(outRow < height && outCol < width) {
+        for (int fRow = 0; fRow < filterDiameter; fRow++) {
+            for (int fCol = 0; fCol < filterDiameter; fCol++) {
+                int inRow = outRow - r + fRow;
+                int inCol = outCol - r + fCol;
+                if (inRow > 0 && inRow < height && inCol > 0 && inCol < width) {
+                    
+                    
+                    float fValue = F[fCol][fRow];
+                    printf("fValue %f, inRow %d, inCol %d, outRow %d, outCol %d\n", 
+                        fValue, inRow, inCol, outRow, outCol);
+                    float nValue = N[inRow * width + inCol];
+                    printf("nValue %f, inRow %d, inCol %d, outRow %d, outCol %d\n", 
+                        nValue, inRow, inCol, outRow, outCol);
+                    Pvalue += fValue * nValue;
+                    printf("Pvalue %f, inRow %d, inCol %d, outRow %d, outCol %d\n", 
+                        Pvalue, inRow, inCol, outRow, outCol);
+                }
             }
         }
+    
+        P[outRow*width + outCol] = Pvalue;
     }
-    P[outRow*width + outCol] = Pvalue;
+    
 }
 
 __global__ void convolution_2D_tiled_kernel(
@@ -180,8 +193,8 @@ void convolution_2D_basic(
     cudaCheckError(cudaDeviceSynchronize());
 
     cudaMemcpy(
-        P,
         P_h,
+        P,
         pSize,
         cudaMemcpyDeviceToHost
     );
@@ -204,17 +217,23 @@ int main() {
         0,0,0
     };
 
+    /*
     float F_h[] = {
         0.025, 0.1, 0.025,
         0.1  , 0.5, 0.1,
         0.25 , 0.1, 0.025
     };
+    */
+
+    float F_h[] = {
+        0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0
+    };
 
     float P[p_count]; 
 
-    int r = 2;
-
-
+    int r = 1;
 
     convolution_2D_basic(
         N, 
@@ -225,11 +244,15 @@ int main() {
         height
     );
 
-    for(int i = 0; i < width; i++) {
-        for(int j = 0; j < height; j++) {
-            int pIndex = i*width + j;
-            float cudaValue = P[pIndex];
-            printf("i %d, j %d, value %f", i, j, cudaValue);
+    printf("P");
+    printf("[");
+    for (int i = 0; i < width; i++){
+        printf("[");
+        for (int j = 0; j < height; j++) {
+            int index = i*width + j;
+            printf("%f,", P[index]);
         }
+        printf("],\n");
     }
+    printf("]");
 }
