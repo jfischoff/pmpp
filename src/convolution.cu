@@ -6,8 +6,8 @@
 #include <cuda_runtime.h>
 #include "errors.h"
 
-#define THREADS_PER_BLOCK_X 16
-#define THREADS_PER_BLOCK_Y 16
+#define THREADS_PER_BLOCK_X 3
+#define THREADS_PER_BLOCK_Y 3
 #define FILTER_RADIUS 2
 #define IN_TILE_DIM 32
 #define OUT_TILE_DIM ((IN_TILE_DIM) - 2 * (FILTER_RADIUS))
@@ -139,9 +139,17 @@ void convolution_2D_basic(
     int nSize = width * height * sizeof(float);
     int pSize = nSize;
     cudaMalloc((void**) &N, nSize);
-    cudaMalloc((void**) &P, pSize);
+    cudaCheckError(cudaGetLastError());
+    cudaCheckError(cudaDeviceSynchronize());
 
-    cudaMemcpy(N_h, N, nSize, cudaMemcpyHostToDevice);
+    cudaMalloc((void**) &P, pSize);
+    cudaCheckError(cudaGetLastError());
+    cudaCheckError(cudaDeviceSynchronize());
+
+    cudaMemcpy(N, N_h, nSize, cudaMemcpyHostToDevice);
+
+    cudaCheckError(cudaGetLastError());
+    cudaCheckError(cudaDeviceSynchronize());
 
     dim3 dimBlock(
         THREADS_PER_BLOCK_X,
@@ -151,7 +159,7 @@ void convolution_2D_basic(
 
     dim3 dimGrid(
         ceil((float) width / THREADS_PER_BLOCK_X ),
-        ceil((float) width / THREADS_PER_BLOCK_Y ),
+        ceil((float) height / THREADS_PER_BLOCK_Y ),
         1
     );
 
@@ -159,9 +167,10 @@ void convolution_2D_basic(
     printf("dimBlock: (%d, %d, %d)\n", dimBlock.x, dimBlock.y, dimBlock.z);
     printf("dimGrid: (%d, %d, %d)\n", dimGrid.x, dimGrid.y, dimGrid.z);
 
-    convolution_cached_tiled_2D_const_mem_kernel<<< dimGrid, dimBlock >>>(
+    convolution_2D_basic_kernel<<< dimGrid, dimBlock >>>(
             N, 
             P, 
+            r,
             width, 
             height
         );
