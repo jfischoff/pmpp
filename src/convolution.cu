@@ -12,6 +12,12 @@
 #define IN_TILE_DIM 32
 #define OUT_TILE_DIM ((IN_TILE_DIM) - 2 * (FILTER_RADIUS))
 __constant__ float F[2*FILTER_RADIUS+1][2*FILTER_RADIUS+1];
+#define DEBUG_PRINT 0
+#if DEBUG_PRINT
+#define DPRINTF(...) printf(__VA_ARGS__)
+#else
+#define DPRINTF(...) do {} while (0)
+#endif
 
 
 
@@ -37,13 +43,14 @@ __global__ void convolution_2D_basic_kernel(
                     
                     
                     float fValue = F[fCol][fRow];
-                    printf("fValue %f, inRow %d, inCol %d, outRow %d, outCol %d\n", 
+                    
+                    DPRINTF("fValue %f, inRow %d, inCol %d, outRow %d, outCol %d\n", 
                         fValue, inRow, inCol, outRow, outCol);
                     float nValue = N[inRow * width + inCol];
-                    printf("nValue %f, inRow %d, inCol %d, outRow %d, outCol %d\n", 
+                    DPRINTF("nValue %f, inRow %d, inCol %d, outRow %d, outCol %d\n", 
                         nValue, inRow, inCol, outRow, outCol);
                     Pvalue += fValue * nValue;
-                    printf("Pvalue %f, inRow %d, inCol %d, outRow %d, outCol %d\n", 
+                    DPRINTF("Pvalue %f, inRow %d, inCol %d, outRow %d, outCol %d\n", 
                         Pvalue, inRow, inCol, outRow, outCol);
                 }
             }
