@@ -8,6 +8,7 @@
 
 #define THREADS_PER_BLOCK_X 16
 #define THREADS_PER_BLOCK_Y 16
+#define THREADS_PRE_BLOCK_Z 3
 #define FILTER_RADIUS 1
 #define IN_TILE_DIM 32
 #define OUT_TILE_DIM ((IN_TILE_DIM) - 2 * (FILTER_RADIUS))
@@ -26,37 +27,32 @@ __global__ void convolution_2D_basic_kernel(
     float *P, 
     int r, 
     int width, 
-    int height) {
+    int height,
+    int channels) {
 
     int outCol = blockIdx.x * blockDim.x + threadIdx.x;
     int outRow = blockIdx.y * blockDim.y + threadIdx.y;
+    int channelIndex = blockIdx.z * blockDim.z + threadIdx.z;
 
     float Pvalue = 0.0f;
 
     int filterDiameter = 2*r+1;
-    if(outRow < height && outCol < width) {
+    if(outRow < height && outCol < width && channelIndex < channels) {
         for (int fRow = 0; fRow < filterDiameter; fRow++) {
             for (int fCol = 0; fCol < filterDiameter; fCol++) {
                 int inRow = outRow - r + fRow;
                 int inCol = outCol - r + fCol;
-                if (inRow > 0 && inRow < height && inCol > 0 && inCol < width) {
-                    
+                if (inRow >= 0 && inRow < height && inCol >= 0 && inCol < width) {
                     
                     float fValue = F[fCol][fRow];
-                    
-                    DPRINTF("fValue %f, inRow %d, inCol %d, outRow %d, outCol %d\n", 
-                        fValue, inRow, inCol, outRow, outCol);
-                    float nValue = N[inRow * width + inCol];
-                    DPRINTF("nValue %f, inRow %d, inCol %d, outRow %d, outCol %d\n", 
-                        nValue, inRow, inCol, outRow, outCol);
+                    float nValue = N[(inRow * width + inCol) * channels + channelIndex];
                     Pvalue += fValue * nValue;
-                    DPRINTF("Pvalue %f, inRow %d, inCol %d, outRow %d, outCol %d\n", 
-                        Pvalue, inRow, inCol, outRow, outCol);
+                    
                 }
             }
         }
     
-        P[outRow*width + outCol] = Pvalue;
+        P[(outRow*width + outCol) * channels + channelIndex] = Pvalue;
     }
     
 }
@@ -146,17 +142,16 @@ void convolution_2D_basic(
     float *P_h,
     int r,
     int width,
-    int height
+    int height,
+    int channels
 ) {
-    //int nSize = 
-
     int filterDiameter = r*2+1;
     int fSize = filterDiameter * filterDiameter * sizeof(float); 
 
     cudaMemcpyToSymbol(F, F_h, fSize);
 
     float *N, *P;
-    int nSize = width * height * sizeof(float);
+    int nSize = width * height * channels * sizeof(float);
     int pSize = nSize;
     cudaMalloc((void**) &N, nSize);
     cudaCheckError(cudaGetLastError());
@@ -174,7 +169,7 @@ void convolution_2D_basic(
     dim3 dimBlock(
         THREADS_PER_BLOCK_X,
         THREADS_PER_BLOCK_Y,
-        1
+        THREADS_PRE_BLOCK_Z
     );
 
     dim3 dimGrid(
@@ -192,7 +187,8 @@ void convolution_2D_basic(
             P, 
             r,
             width, 
-            height
+            height,
+            channels
         );
 
 
@@ -206,41 +202,115 @@ void convolution_2D_basic(
         cudaMemcpyDeviceToHost
     );
 
-    cudaFree(N_h);
-    cudaFree(P_h);
+    cudaFree(N);
+    cudaFree(P);
 
     return;
 }
 
+enum Filter {
+    IDENTITY_1,
+    BLUR_1,
+    BLUR_2
+};
+
+enum InputOutput {
+    IDENTITY,
+    IMAGE
+};
+
 int main() {
 
-    int height = 3;
-    int width = 3;
-    int p_count = width * height;
-
-    float N[] = {
-        0,0,0,
-        0,1,0,
-        0,0,0
-    };
-
-    /*
-    float F_h[] = {
-        0.025, 0.1, 0.025,
-        0.1  , 0.5, 0.1,
-        0.25 , 0.1, 0.025
-    };
-    */
-
-    float F_h[] = {
+    Filter filterType = BLUR_1;
+    InputOutput inputOutputType = IMAGE;
+    int r = -1;
+    float* F_h = NULL;
+    float F_h_static_1[] = {
         0.0, 0.0, 0.0,
         0.0, 1.0, 0.0,
         0.0, 0.0, 0.0
     };
 
-    float P[p_count]; 
+    float F_h_static_2[] = {
+        0.0751, 0.1238, 0.0751,
+        0.1238, 0.2042, 0.1238,
+        0.0751, 0.1238, 0.0751
+    };
 
-    int r = 1;
+    float F_h_static_3[] = {
+        0.025, 0.1, 0.025,
+        0.1  , 0.5, 0.1,
+        0.25 , 0.1, 0.025
+    };
+
+    switch (filterType) {
+        case IDENTITY_1:
+            r = 1;
+            F_h = F_h_static_1;
+            break;
+        case BLUR_1:
+            r = 1;
+            F_h = F_h_static_2;
+            break;
+        case BLUR_2:
+            r = 2;
+            F_h = F_h_static_3;
+            assert(false && "BLUR_2 not implemented");
+            break;
+    }
+
+    int width, height, channels;
+    const char* input_filename = "data/man.png";
+    const char* output_filename = "generated/convolution.png";
+    unsigned char* Pin = NULL;
+    float* N = NULL;
+    unsigned char* Pout = NULL;
+    float N_static[] = {
+        1, 0, 0,
+        0, 1, 0,
+        0, 0, 1,
+
+        1, 0, 0,
+        0, 1, 0,
+        0, 0, 1,
+
+        1, 0, 0,
+        0, 1, 0,
+        0, 0, 1
+    };
+    
+
+    switch (inputOutputType) {
+        case IDENTITY:
+            height = 3;
+            width = 3;
+            channels = 3;
+            N = N_static;
+            
+            break;
+        case IMAGE:
+
+            Pin = stbi_load(input_filename, &width, &height, &channels, 3);
+
+            if (!Pin) {
+                printf("Error loading image %s\n", input_filename);
+                return 1;
+            }
+
+            printf("Loaded image: %dx%d with %d channels\n", width, height, channels);
+
+            // convert the unsigned char* to float
+            N = (float*)malloc(width * height * channels * sizeof(float));
+
+            // Convert unsigned char to float
+            for (int i = 0; i < width * height * channels; i++) {
+                N[i] = (float)Pin[i] / 255.0f;
+            }
+            break;
+    }
+    
+    float* P = (float*)malloc(width * height * channels * sizeof(float));
+    int p_count = width * height * channels;
 
     convolution_2D_basic(
         N, 
@@ -248,18 +318,41 @@ int main() {
         P, 
         r,
         width, 
-        height
+        height,
+        channels
     );
 
-    printf("P");
-    printf("[");
-    for (int i = 0; i < width; i++){
-        printf("[");
-        for (int j = 0; j < height; j++) {
-            int index = i*width + j;
-            printf("%f,", P[index]);
-        }
-        printf("],\n");
+    switch (inputOutputType) {
+        case IDENTITY:
+            printf("P");
+            printf("[");
+            for (int i = 0; i < width; i++){
+                printf("[");
+                for (int j = 0; j < height; j++) {
+                    int index = i*width + j;
+                    printf("%f,", P[index]);
+                }
+                printf("],\n");
+            }
+            printf("]");
+            break;
+        case IMAGE:
+            // Save the grayscale image
+            Pout = (unsigned char*)malloc(width * height * channels);
+            for (int i = 0; i < width * height * channels; i++) {
+                Pout[i] = (unsigned char)(P[i] * 255.0f);
+            }
+            stbi_write_png(output_filename, width, height, channels, Pout, width * channels);
+
+            printf("Saved grayscale image to %s\n", output_filename);
+
+            // Clean up
+            stbi_image_free(Pin);
+            free(Pout);
+            free(N);
+            break;
     }
-    printf("]");
+
+    free(P);
+
 }
