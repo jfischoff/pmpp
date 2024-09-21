@@ -61,7 +61,8 @@ __global__ void convolution_2D_tiled_kernel(
     float *N, 
     float *P, 
     int width, 
-    int height) {
+    int height,
+    int channels) {
 
     __shared__ float N_s[IN_TILE_DIM][IN_TILE_DIM];
 
@@ -97,7 +98,8 @@ __global__ void convolution_cached_tiled_2D_const_mem_kernel(
     float *N, 
     float *P, 
     int width, 
-    int height) {
+    int height,
+    int channels) {
     
     int col = blockIdx.x*OUT_TILE_DIM + threadIdx.x;
     int row = blockIdx.y*OUT_TILE_DIM + threadIdx.y;
@@ -136,6 +138,12 @@ __global__ void convolution_cached_tiled_2D_const_mem_kernel(
 
 }
 
+enum Method {
+    REGULAR,
+    TILED,
+    TILED_CONST
+};
+
 void convolution_2D_basic(
     float *N_h,
     float *F_h,
@@ -143,7 +151,8 @@ void convolution_2D_basic(
     int r,
     int width,
     int height,
-    int channels
+    int channels,
+    Method method
 ) {
     int filterDiameter = r*2+1;
     int fSize = filterDiameter * filterDiameter * sizeof(float); 
@@ -182,14 +191,37 @@ void convolution_2D_basic(
     printf("dimBlock: (%d, %d, %d)\n", dimBlock.x, dimBlock.y, dimBlock.z);
     printf("dimGrid: (%d, %d, %d)\n", dimGrid.x, dimGrid.y, dimGrid.z);
 
-    convolution_2D_basic_kernel<<< dimGrid, dimBlock >>>(
-            N, 
-            P, 
-            r,
-            width, 
-            height,
-            channels
-        );
+    
+    switch(method) {
+        REGULAR:
+            convolution_2D_basic_kernel<<< dimGrid, dimBlock >>>(
+                N, 
+                P, 
+                r,
+                width, 
+                height,
+                channels
+            );
+            break;
+        TILED:
+            convolution_2D_tiled_kernel<<< dimGrid, dimBlock >>>(
+                N, 
+                P,
+                width, 
+                height,
+                channels
+            );
+            break;
+        TILED_CONST:
+            convolution_cached_tiled_2D_const_mem_kernel<<< dimGrid, dimBlock >>>(
+                N, 
+                P, 
+                width, 
+                height,
+                channels
+            );
+            break;
+    }
 
 
     cudaCheckError(cudaGetLastError());
@@ -219,10 +251,15 @@ enum InputOutput {
     IMAGE
 };
 
+
+
 int main() {
 
     Filter filterType = BLUR_1;
     InputOutput inputOutputType = IMAGE;
+    Method method = REGULAR;
+
+
     int r = -1;
     float* F_h = NULL;
     float F_h_static_1[] = {
@@ -319,8 +356,10 @@ int main() {
         r,
         width, 
         height,
-        channels
+        channels,
+        method
     );
+       
 
     switch (inputOutputType) {
         case IDENTITY:
